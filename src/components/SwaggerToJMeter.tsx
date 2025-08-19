@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, Download, FileText, Settings, Zap } from "lucide-react";
 import * as yaml from "js-yaml";
@@ -14,6 +16,10 @@ interface JMeterConfig {
   loopCount: number;
   baseUrl: string;
   testPlanName: string;
+  groupingStrategy: 'thread-groups' | 'simple-controllers';
+  addAssertions: boolean;
+  addCorrelation: boolean;
+  generateCsvConfig: boolean;
 }
 
 export const SwaggerToJMeter = () => {
@@ -25,7 +31,11 @@ export const SwaggerToJMeter = () => {
     rampUpTime: 10,
     loopCount: 1,
     baseUrl: "",
-    testPlanName: "API Performance Test"
+    testPlanName: "API Performance Test",
+    groupingStrategy: 'thread-groups',
+    addAssertions: true,
+    addCorrelation: true,
+    generateCsvConfig: false
   });
   const { toast } = useToast();
 
@@ -89,6 +99,122 @@ export const SwaggerToJMeter = () => {
         };
       }
     })();
+
+    // Helper function to generate authentication managers
+    const generateAuthManagers = (): string => {
+      if (!spec.components?.securitySchemes && !spec.securityDefinitions) return '';
+      
+      const securitySchemes = spec.components?.securitySchemes || spec.securityDefinitions || {};
+      let authManagers = '';
+      
+      for (const [schemeName, scheme] of Object.entries(securitySchemes)) {
+        const schemeObj = scheme as any;
+        
+        if (schemeObj.type === 'apiKey') {
+          if (schemeObj.in === 'header') {
+            authManagers += `
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="API Key Header Manager - ${schemeName}" enabled="true">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">${schemeObj.name}</stringProp>
+              <stringProp name="Header.value">\${API_KEY_${schemeName.toUpperCase()}}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>`;
+          }
+        } else if (schemeObj.type === 'http' && schemeObj.scheme === 'bearer') {
+          authManagers += `
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Bearer Token Manager - ${schemeName}" enabled="true">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer \${BEARER_TOKEN}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>`;
+        } else if (schemeObj.type === 'http' && schemeObj.scheme === 'basic') {
+          authManagers += `
+        <AuthManager guiclass="AuthPanel" testclass="AuthManager" testname="HTTP Authorization Manager - ${schemeName}" enabled="true">
+          <collectionProp name="AuthManager.auth_list">
+            <elementProp name="" elementType="Authorization">
+              <stringProp name="Authorization.url">\${BASE_URL}</stringProp>
+              <stringProp name="Authorization.username">\${BASIC_USERNAME}</stringProp>
+              <stringProp name="Authorization.password">\${BASIC_PASSWORD}</stringProp>
+              <stringProp name="Authorization.domain"></stringProp>
+              <stringProp name="Authorization.realm"></stringProp>
+            </elementProp>
+          </collectionProp>
+        </AuthManager>
+        <hashTree/>`;
+        }
+      }
+      
+      return authManagers;
+    };
+
+    // Helper function to generate assertions
+    const generateResponseAssertions = (samplerName: string): string => {
+      if (!config.addAssertions) return '';
+      
+      return `
+        <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="HTTP Success Assertion" enabled="true">
+          <collectionProp name="Asserion.test_strings">
+            <stringProp name="49586">200</stringProp>
+            <stringProp name="49587">201</stringProp>
+            <stringProp name="49588">202</stringProp>
+            <stringProp name="49589">204</stringProp>
+          </collectionProp>
+          <stringProp name="Assertion.custom_message">Expected successful HTTP status code (2xx)</stringProp>
+          <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+          <boolProp name="Assertion.assume_success">false</boolProp>
+          <intProp name="Assertion.test_type">33</intProp>
+        </ResponseAssertion>
+        <hashTree/>`;
+    };
+
+    // Helper function to generate JSON extractors for correlation
+    const generateJsonExtractors = (op: any): string => {
+      if (!config.addCorrelation) return '';
+      
+      const extractors: string[] = [];
+      
+      // Extract common ID patterns
+      const idPatterns = ['id', 'userId', 'orderId', 'productId', 'customerId', 'petId'];
+      
+      idPatterns.forEach(pattern => {
+        extractors.push(`
+        <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract ${pattern}" enabled="true">
+          <stringProp name="JSONPostProcessor.referenceNames">${pattern}</stringProp>
+          <stringProp name="JSONPostProcessor.jsonPathExprs">$.${pattern}</stringProp>
+          <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+          <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+        </JSONPostProcessor>
+        <hashTree/>`);
+      });
+      
+      return extractors.join('\n');
+    };
+
+    // Helper function to generate CSV config
+    const generateCsvConfig = (): string => {
+      if (!config.generateCsvConfig) return '';
+      
+      return `
+        <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="Test Data CSV Config" enabled="true">
+          <stringProp name="delimiter">,</stringProp>
+          <stringProp name="fileEncoding">UTF-8</stringProp>
+          <stringProp name="filename">test-data.csv</stringProp>
+          <boolProp name="ignoreFirstLine">true</boolProp>
+          <boolProp name="quotedData">false</boolProp>
+          <boolProp name="recycle">true</boolProp>
+          <stringProp name="shareMode">shareMode.all</stringProp>
+          <boolProp name="stopThread">false</boolProp>
+          <stringProp name="variableNames">userId,orderId,productId,email</stringProp>
+        </CSVDataSet>
+        <hashTree/>`;
+    };
     
     // Extract paths and operations
     const operations: Array<{
@@ -256,11 +382,14 @@ export const SwaggerToJMeter = () => {
 
     // Helper function to generate HTTP sampler for an operation
     const generateHttpSampler = (op: any): string => {
-      const samplerName = op.operationId || op.summary || `${op.method} ${op.path}`;
+      // Better naming convention: [METHOD] /path → Description
+      const operationDescription = op.summary || `${op.method} ${op.path}`;
+      const samplerName = `[${op.method}] ${op.path} → ${operationDescription}`;
       const pathWithoutParams = op.path.replace(/{([^}]+)}/g, '${$1}');
       const needsBody = ['POST', 'PUT', 'PATCH'].includes(op.method);
       const requestBody = needsBody ? generateRequestBody(op.requestBody) : '';
       
+      // Use parameterized URL instead of hardcoded domain/port
       const bodyDataProp = requestBody ? `
           <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
@@ -276,24 +405,30 @@ export const SwaggerToJMeter = () => {
             <collectionProp name="Arguments.arguments"/>
           </elementProp>`;
       
+      const assertions = generateResponseAssertions(samplerName);
+      const extractors = generateJsonExtractors(op);
+      
       return `
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="${samplerName}" enabled="true">
           ${bodyDataProp}
-          <stringProp name="HTTPSampler.domain">${urlParts.domain}</stringProp>
-          <stringProp name="HTTPSampler.port">${urlParts.port}</stringProp>
-          <stringProp name="HTTPSampler.protocol">${urlParts.protocol}</stringProp>
+          <stringProp name="HTTPSampler.domain">\${__P(domain,${urlParts.domain})}</stringProp>
+          <stringProp name="HTTPSampler.port">\${__P(port,${urlParts.port})}</stringProp>
+          <stringProp name="HTTPSampler.protocol">\${__P(protocol,${urlParts.protocol})}</stringProp>
           <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
-          <stringProp name="HTTPSampler.path">${urlParts.path}${pathWithoutParams}</stringProp>
+          <stringProp name="HTTPSampler.path">\${BASE_PATH}${pathWithoutParams}</stringProp>
           <stringProp name="HTTPSampler.method">${op.method}</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
           <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
           <stringProp name="HTTPSampler.embedded_url_re"></stringProp>
-          <stringProp name="HTTPSampler.connect_timeout">60000</stringProp>
-          <stringProp name="HTTPSampler.response_timeout">60000</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">\${CONNECTION_TIMEOUT}</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">\${RESPONSE_TIMEOUT}</stringProp>
         </HTTPSamplerProxy>
-        <hashTree/>`;
+        <hashTree>
+          ${assertions}
+          ${extractors}
+        </hashTree>`;
     };
 
     // Group operations by tags
@@ -309,22 +444,26 @@ export const SwaggerToJMeter = () => {
     // Generate Thread Groups for each tag
     const threadGroups = Array.from(tagGroups.entries()).map(([tag, tagOperations]) => {
       const httpSamplers = tagOperations.map(op => generateHttpSampler(op)).join('\n');
+      const authManagers = generateAuthManagers();
+      const csvConfig = generateCsvConfig();
       
       return `
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="${tag} APIs" enabled="true">
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller" enabled="true">
           <boolProp name="LoopController.continue_forever">false</boolProp>
-          <stringProp name="LoopController.loops">${config.loopCount}</stringProp>
+          <stringProp name="LoopController.loops">\${__P(loops,${config.loopCount})}</stringProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">${config.threadCount}</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">${config.rampUpTime}</stringProp>
+        <stringProp name="ThreadGroup.num_threads">\${__P(threads,${config.threadCount})}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">\${__P(rampup,${config.rampUpTime})}</stringProp>
         <boolProp name="ThreadGroup.scheduler">false</boolProp>
         <stringProp name="ThreadGroup.duration"></stringProp>
         <stringProp name="ThreadGroup.delay"></stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
       </ThreadGroup>
       <hashTree>
+        ${csvConfig}
+        
         <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults" enabled="true">
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
             <collectionProp name="Arguments.arguments"/>
@@ -335,10 +474,12 @@ export const SwaggerToJMeter = () => {
           <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
           <stringProp name="HTTPSampler.path"></stringProp>
           <stringProp name="HTTPSampler.concurrentPool">6</stringProp>
-          <stringProp name="HTTPSampler.connect_timeout">60000</stringProp>
-          <stringProp name="HTTPSampler.response_timeout">60000</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">\${CONNECTION_TIMEOUT}</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">\${RESPONSE_TIMEOUT}</stringProp>
         </ConfigTestElement>
         <hashTree/>
+        
+        ${authManagers}
         
         <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager - ${tag}" enabled="true">
           <collectionProp name="HeaderManager.headers">
@@ -435,6 +576,44 @@ export const SwaggerToJMeter = () => {
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
+        
+        <ResultCollector guiclass="AggregateReport" testclass="ResultCollector" testname="Aggregate Report - ${tag}" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>false</responseData>
+              <samplerData>false</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
       </hashTree>`;
     }).join('\n');
 
@@ -442,7 +621,14 @@ export const SwaggerToJMeter = () => {
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.4.1">
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="${config.testPlanName}" enabled="true">
-      <stringProp name="TestPlan.comments">Generated from OpenAPI/Swagger specification</stringProp>
+      <stringProp name="TestPlan.comments">Generated from OpenAPI/Swagger specification
+Generated on: ${new Date(timestamp).toISOString()}
+Swagger Version: ${spec.openapi || spec.swagger || 'Unknown'}
+Base URL: ${config.baseUrl}
+Grouping Strategy: ${config.groupingStrategy}
+Assertions: ${config.addAssertions ? 'Enabled' : 'Disabled'}
+Correlation: ${config.addCorrelation ? 'Enabled' : 'Disabled'}
+CSV Config: ${config.generateCsvConfig ? 'Enabled' : 'Disabled'}</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
@@ -451,6 +637,36 @@ export const SwaggerToJMeter = () => {
           <elementProp name="BASE_URL" elementType="Argument">
             <stringProp name="Argument.name">BASE_URL</stringProp>
             <stringProp name="Argument.value">${config.baseUrl}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="BASE_PATH" elementType="Argument">
+            <stringProp name="Argument.name">BASE_PATH</stringProp>
+            <stringProp name="Argument.value">${urlParts.path}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="CONNECTION_TIMEOUT" elementType="Argument">
+            <stringProp name="Argument.name">CONNECTION_TIMEOUT</stringProp>
+            <stringProp name="Argument.value">60000</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="RESPONSE_TIMEOUT" elementType="Argument">
+            <stringProp name="Argument.name">RESPONSE_TIMEOUT</stringProp>
+            <stringProp name="Argument.value">60000</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="BEARER_TOKEN" elementType="Argument">
+            <stringProp name="Argument.name">BEARER_TOKEN</stringProp>
+            <stringProp name="Argument.value">your_bearer_token_here</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="BASIC_USERNAME" elementType="Argument">
+            <stringProp name="Argument.name">BASIC_USERNAME</stringProp>
+            <stringProp name="Argument.value">your_username_here</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="BASIC_PASSWORD" elementType="Argument">
+            <stringProp name="Argument.name">BASIC_PASSWORD</stringProp>
+            <stringProp name="Argument.value">your_password_here</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>
@@ -611,6 +827,61 @@ export const SwaggerToJMeter = () => {
                   value={config.loopCount}
                   onChange={(e) => setConfig(prev => ({ ...prev, loopCount: parseInt(e.target.value) || 1 }))}
                 />
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="groupingStrategy">Grouping Strategy</Label>
+                <Select 
+                  value={config.groupingStrategy} 
+                  onValueChange={(value: 'thread-groups' | 'simple-controllers') => 
+                    setConfig(prev => ({ ...prev, groupingStrategy: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select grouping strategy" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="thread-groups">Thread Groups per Tag (Recommended)</SelectItem>
+                    <SelectItem value="simple-controllers">Simple Controllers per Tag</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="addAssertions"
+                    checked={config.addAssertions}
+                    onCheckedChange={(checked) => setConfig(prev => ({ ...prev, addAssertions: checked }))}
+                  />
+                  <Label htmlFor="addAssertions" className="text-sm">
+                    HTTP Response Assertions (2xx)
+                  </Label>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="addCorrelation"
+                    checked={config.addCorrelation}
+                    onCheckedChange={(checked) => setConfig(prev => ({ ...prev, addCorrelation: checked }))}
+                  />
+                  <Label htmlFor="addCorrelation" className="text-sm">
+                    JSON Extractors for IDs
+                  </Label>
+                </div>
+
+                <div className="flex items-center space-x-2 col-span-2">
+                  <Switch
+                    id="generateCsvConfig"
+                    checked={config.generateCsvConfig}
+                    onCheckedChange={(checked) => setConfig(prev => ({ ...prev, generateCsvConfig: checked }))}
+                  />
+                  <Label htmlFor="generateCsvConfig" className="text-sm">
+                    Generate CSV Data Set Config
+                  </Label>
+                </div>
               </div>
             </div>
           </CardContent>
