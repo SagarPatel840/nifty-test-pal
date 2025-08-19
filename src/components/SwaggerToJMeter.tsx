@@ -254,8 +254,8 @@ export const SwaggerToJMeter = () => {
       return JSON.stringify(sampleData, null, 2);
     };
 
-    // Generate HTTP samplers
-    const httpSamplers = operations.map((op, index) => {
+    // Helper function to generate HTTP sampler for an operation
+    const generateHttpSampler = (op: any): string => {
       const samplerName = op.operationId || op.summary || `${op.method} ${op.path}`;
       const pathWithoutParams = op.path.replace(/{([^}]+)}/g, '${$1}');
       const needsBody = ['POST', 'PUT', 'PATCH'].includes(op.method);
@@ -294,7 +294,7 @@ export const SwaggerToJMeter = () => {
           <stringProp name="HTTPSampler.response_timeout">60000</stringProp>
         </HTTPSamplerProxy>
         <hashTree/>`;
-    }).join('\n');
+    };
 
     // Group operations by tags
     const tagGroups = new Map<string, typeof operations>();
@@ -306,27 +306,12 @@ export const SwaggerToJMeter = () => {
       tagGroups.get(tag)!.push(op);
     });
 
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.4.1">
-  <hashTree>
-    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="${config.testPlanName}" enabled="true">
-      <stringProp name="TestPlan.comments">Generated from OpenAPI/Swagger specification</stringProp>
-      <boolProp name="TestPlan.functional_mode">false</boolProp>
-      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
-      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
-      <elementProp name="TestPlan.arguments" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
-        <collectionProp name="Arguments.arguments">
-          <elementProp name="BASE_URL" elementType="Argument">
-            <stringProp name="Argument.name">BASE_URL</stringProp>
-            <stringProp name="Argument.value">${config.baseUrl}</stringProp>
-            <stringProp name="Argument.metadata">=</stringProp>
-          </elementProp>
-        </collectionProp>
-      </elementProp>
-      <stringProp name="TestPlan.user_define_classpath"></stringProp>
-    </TestPlan>
-    <hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="API Thread Group" enabled="true">
+    // Generate Thread Groups for each tag
+    const threadGroups = Array.from(tagGroups.entries()).map(([tag, tagOperations]) => {
+      const httpSamplers = tagOperations.map(op => generateHttpSampler(op)).join('\n');
+      
+      return `
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="${tag} APIs" enabled="true">
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller" enabled="true">
           <boolProp name="LoopController.continue_forever">false</boolProp>
@@ -355,7 +340,7 @@ export const SwaggerToJMeter = () => {
         </ConfigTestElement>
         <hashTree/>
         
-        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager - ${tag}" enabled="true">
           <collectionProp name="HeaderManager.headers">
             <elementProp name="" elementType="Header">
               <stringProp name="Header.name">Content-Type</stringProp>
@@ -367,7 +352,7 @@ export const SwaggerToJMeter = () => {
             </elementProp>
             <elementProp name="" elementType="Header">
               <stringProp name="Header.name">User-Agent</stringProp>
-              <stringProp name="Header.value">JMeter Performance Test</stringProp>
+              <stringProp name="Header.value">JMeter Performance Test - ${tag}</stringProp>
             </elementProp>
           </collectionProp>
         </HeaderManager>
@@ -375,7 +360,7 @@ export const SwaggerToJMeter = () => {
 
         ${httpSamplers}
 
-        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree - ${tag}" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -413,7 +398,7 @@ export const SwaggerToJMeter = () => {
         </ResultCollector>
         <hashTree/>
         
-        <ResultCollector guiclass="SummaryReport" testclass="ResultCollector" testname="Summary Report" enabled="true">
+        <ResultCollector guiclass="SummaryReport" testclass="ResultCollector" testname="Summary Report - ${tag}" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -450,7 +435,30 @@ export const SwaggerToJMeter = () => {
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
-      </hashTree>
+      </hashTree>`;
+    }).join('\n');
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.4.1">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="${config.testPlanName}" enabled="true">
+      <stringProp name="TestPlan.comments">Generated from OpenAPI/Swagger specification</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.arguments" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="BASE_URL" elementType="Argument">
+            <stringProp name="Argument.name">BASE_URL</stringProp>
+            <stringProp name="Argument.value">${config.baseUrl}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+        </collectionProp>
+      </elementProp>
+      <stringProp name="TestPlan.user_define_classpath"></stringProp>
+    </TestPlan>
+    <hashTree>
+      ${threadGroups}
     </hashTree>
   </hashTree>
 </jmeterTestPlan>`;
