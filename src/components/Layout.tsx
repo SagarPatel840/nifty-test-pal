@@ -13,7 +13,8 @@ import {
   FolderOpen,
   Target,
   BarChart3,
-  Brain
+  Brain,
+  Zap
 } from "lucide-react";
 
 interface LayoutProps {
@@ -33,6 +34,7 @@ export const Layout = ({ children, currentView, onViewChange, selectedProject, o
     { id: 'test-cases', label: 'Test Cases', icon: TestTube },
     { id: 'test-plan', label: 'Test Plan', icon: Target },
     { id: 'test-report', label: 'Test Report', icon: BarChart3 },
+    { id: 'performance-testing', label: 'Performance Testing', icon: Zap },
     { id: 'ai-analytics', label: 'AI Analytics', icon: Brain },
     { id: 'integrations', label: 'Integrations', icon: Settings },
   ];

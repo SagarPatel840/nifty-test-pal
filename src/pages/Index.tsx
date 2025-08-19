@@ -8,6 +8,7 @@ import { TestPlan } from "@/components/TestPlan";
 import { TestReport } from "@/components/TestReport";
 import { Integrations } from "@/components/Integrations";
 import { AIAnalytics } from "@/components/AIAnalytics";
+import { SwaggerToJMeter } from "@/components/SwaggerToJMeter";
 
 const Index = () => {
   const [currentView, setCurrentView] = useState('projects');
@@ -43,6 +44,8 @@ const Index = () => {
         return <TestPlan projectId={selectedProject.id} />;
       case 'test-report':
         return <TestReport projectId={selectedProject.id} />;
+      case 'performance-testing':
+        return <SwaggerToJMeter />;
       case 'integrations':
         return <Integrations />;
       case 'ai-analytics':
