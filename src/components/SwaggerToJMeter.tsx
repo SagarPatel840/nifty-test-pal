@@ -70,6 +70,26 @@ export const SwaggerToJMeter = () => {
   const generateJMeterXml = (spec: any, config: JMeterConfig): string => {
     const timestamp = Date.now();
     
+    // Parse base URL to extract domain, port, protocol
+    const urlParts = (() => {
+      try {
+        const url = new URL(config.baseUrl);
+        return {
+          protocol: url.protocol.replace(':', ''),
+          domain: url.hostname,
+          port: url.port || (url.protocol === 'https:' ? '443' : '80'),
+          path: url.pathname !== '/' ? url.pathname : ''
+        };
+      } catch {
+        return {
+          protocol: 'https',
+          domain: config.baseUrl.replace(/^https?:\/\//, '').split('/')[0],
+          port: '',
+          path: ''
+        };
+      }
+    })();
+    
     // Extract paths and operations
     const operations: Array<{
       path: string;
@@ -97,29 +117,85 @@ export const SwaggerToJMeter = () => {
       }
     }
 
+    // Helper function to generate request body for POST/PUT/DELETE requests
+    const generateRequestBody = (requestBody: any): string => {
+      if (!requestBody?.content) return '';
+      
+      const jsonContent = requestBody.content['application/json'];
+      if (!jsonContent?.schema) return '';
+      
+      // Generate sample JSON based on schema
+      const generateSampleJson = (schema: any): any => {
+        if (schema.$ref) {
+          // For now, return a placeholder for $ref schemas
+          return {};
+        }
+        
+        switch (schema.type) {
+          case 'object':
+            const obj: any = {};
+            if (schema.properties) {
+              for (const [key, prop] of Object.entries(schema.properties)) {
+                obj[key] = generateSampleJson(prop as any);
+              }
+            }
+            return obj;
+          case 'array':
+            return schema.items ? [generateSampleJson(schema.items)] : [];
+          case 'string':
+            return schema.example || 'string';
+          case 'integer':
+          case 'number':
+            return schema.example || 0;
+          case 'boolean':
+            return schema.example || false;
+          default:
+            return schema.example || null;
+        }
+      };
+      
+      const sampleData = generateSampleJson(jsonContent.schema);
+      return JSON.stringify(sampleData, null, 2);
+    };
+
     // Generate HTTP samplers
     const httpSamplers = operations.map((op, index) => {
       const samplerName = op.operationId || op.summary || `${op.method} ${op.path}`;
       const pathWithoutParams = op.path.replace(/{([^}]+)}/g, '${$1}');
+      const needsBody = ['POST', 'PUT', 'PATCH'].includes(op.method);
+      const requestBody = needsBody ? generateRequestBody(op.requestBody) : '';
+      
+      const bodyDataProp = requestBody ? `
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">${requestBody.replace(/"/g, '&quot;')}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>` : `
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>`;
       
       return `
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="${samplerName}" enabled="true">
-          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
-            <collectionProp name="Arguments.arguments"/>
-          </elementProp>
-          <stringProp name="HTTPSampler.domain"></stringProp>
-          <stringProp name="HTTPSampler.port"></stringProp>
-          <stringProp name="HTTPSampler.protocol"></stringProp>
-          <stringProp name="HTTPSampler.contentEncoding"></stringProp>
-          <stringProp name="HTTPSampler.path">${pathWithoutParams}</stringProp>
+          ${bodyDataProp}
+          <stringProp name="HTTPSampler.domain">${urlParts.domain}</stringProp>
+          <stringProp name="HTTPSampler.port">${urlParts.port}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${urlParts.protocol}</stringProp>
+          <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
+          <stringProp name="HTTPSampler.path">${urlParts.path}${pathWithoutParams}</stringProp>
           <stringProp name="HTTPSampler.method">${op.method}</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
           <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
           <stringProp name="HTTPSampler.embedded_url_re"></stringProp>
-          <stringProp name="HTTPSampler.connect_timeout"></stringProp>
-          <stringProp name="HTTPSampler.response_timeout"></stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">60000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">60000</stringProp>
         </HTTPSamplerProxy>
         <hashTree/>`;
     }).join('\n');
@@ -172,7 +248,7 @@ export const SwaggerToJMeter = () => {
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
             <collectionProp name="Arguments.arguments"/>
           </elementProp>
-          <stringProp name="HTTPSampler.domain">\${__P(BASE_URL,${config.baseUrl})}</stringProp>
+          <stringProp name="HTTPSampler.domain"></stringProp>
           <stringProp name="HTTPSampler.port"></stringProp>
           <stringProp name="HTTPSampler.protocol"></stringProp>
           <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
