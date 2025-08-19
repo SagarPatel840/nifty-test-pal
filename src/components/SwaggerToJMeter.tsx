@@ -117,6 +117,19 @@ export const SwaggerToJMeter = () => {
       }
     }
 
+    // Helper function to resolve $ref schemas
+    const resolveSchema = (schema: any, spec: any): any => {
+      if (schema.$ref) {
+        const refPath = schema.$ref.replace('#/', '').split('/');
+        let resolved = spec;
+        for (const segment of refPath) {
+          resolved = resolved?.[segment];
+        }
+        return resolved || {};
+      }
+      return schema;
+    };
+
     // Helper function to generate request body for POST/PUT/DELETE requests
     const generateRequestBody = (requestBody: any): string => {
       if (!requestBody?.content) return '';
@@ -124,33 +137,116 @@ export const SwaggerToJMeter = () => {
       const jsonContent = requestBody.content['application/json'];
       if (!jsonContent?.schema) return '';
       
-      // Generate sample JSON based on schema
-      const generateSampleJson = (schema: any): any => {
-        if (schema.$ref) {
-          // For now, return a placeholder for $ref schemas
-          return {};
+      // Counter for generating unique IDs
+      let idCounter = 1;
+      
+      // Generate sample JSON based on schema with realistic data
+      const generateSampleJson = (schema: any, propertyName?: string): any => {
+        // Resolve $ref if present
+        const resolvedSchema = resolveSchema(schema, spec);
+        
+        // Check for example value first
+        if (resolvedSchema.example !== undefined) {
+          return resolvedSchema.example;
         }
         
-        switch (schema.type) {
+        // Check for examples array
+        if (resolvedSchema.examples && Array.isArray(resolvedSchema.examples) && resolvedSchema.examples.length > 0) {
+          return resolvedSchema.examples[0];
+        }
+        
+        switch (resolvedSchema.type) {
           case 'object':
             const obj: any = {};
-            if (schema.properties) {
-              for (const [key, prop] of Object.entries(schema.properties)) {
-                obj[key] = generateSampleJson(prop as any);
+            if (resolvedSchema.properties) {
+              for (const [key, prop] of Object.entries(resolvedSchema.properties)) {
+                obj[key] = generateSampleJson(prop as any, key);
               }
             }
             return obj;
+            
           case 'array':
-            return schema.items ? [generateSampleJson(schema.items)] : [];
+            if (resolvedSchema.items) {
+              return [generateSampleJson(resolvedSchema.items)];
+            }
+            return [];
+            
           case 'string':
-            return schema.example || 'string';
+            // Generate more realistic string values based on property names
+            if (propertyName) {
+              const lowerName = propertyName.toLowerCase();
+              if (lowerName.includes('id')) return String(idCounter++);
+              if (lowerName.includes('name')) return `sample${propertyName.charAt(0).toUpperCase() + propertyName.slice(1)}`;
+              if (lowerName.includes('email')) return 'sample@example.com';
+              if (lowerName.includes('url') || lowerName.includes('link')) return 'https://example.com';
+              if (lowerName.includes('phone')) return '+1234567890';
+              if (lowerName.includes('address')) return '123 Sample St';
+              if (lowerName.includes('city')) return 'Sample City';
+              if (lowerName.includes('country')) return 'Sample Country';
+              if (lowerName.includes('description') || lowerName.includes('comment')) return 'Sample description';
+              if (lowerName.includes('status')) return 'active';
+              if (lowerName.includes('type') || lowerName.includes('category')) return 'sample';
+            }
+            
+            // Check enum values
+            if (resolvedSchema.enum && resolvedSchema.enum.length > 0) {
+              return resolvedSchema.enum[0];
+            }
+            
+            return 'sample';
+            
           case 'integer':
+            // Generate realistic integers based on property names
+            if (propertyName) {
+              const lowerName = propertyName.toLowerCase();
+              if (lowerName.includes('id')) return idCounter++;
+              if (lowerName.includes('count') || lowerName.includes('quantity')) return 5;
+              if (lowerName.includes('age')) return 25;
+              if (lowerName.includes('year')) return new Date().getFullYear();
+              if (lowerName.includes('month')) return Math.floor(Math.random() * 12) + 1;
+              if (lowerName.includes('day')) return Math.floor(Math.random() * 28) + 1;
+              if (lowerName.includes('price') || lowerName.includes('amount')) return 100;
+            }
+            
+            // Check for minimum/maximum constraints
+            if (resolvedSchema.minimum !== undefined) {
+              return Math.max(resolvedSchema.minimum, 1);
+            }
+            if (resolvedSchema.maximum !== undefined) {
+              return Math.min(resolvedSchema.maximum, 100);
+            }
+            
+            return 1;
+            
           case 'number':
-            return schema.example || 0;
+            // Similar logic for numbers but with decimals
+            if (propertyName) {
+              const lowerName = propertyName.toLowerCase();
+              if (lowerName.includes('price') || lowerName.includes('amount') || lowerName.includes('cost')) return 99.99;
+              if (lowerName.includes('rate') || lowerName.includes('percentage')) return 0.15;
+              if (lowerName.includes('weight')) return 1.5;
+              if (lowerName.includes('height')) return 1.75;
+            }
+            
+            if (resolvedSchema.minimum !== undefined) {
+              return Math.max(resolvedSchema.minimum, 1.0);
+            }
+            if (resolvedSchema.maximum !== undefined) {
+              return Math.min(resolvedSchema.maximum, 100.0);
+            }
+            
+            return 1.0;
+            
           case 'boolean':
-            return schema.example || false;
+            if (propertyName) {
+              const lowerName = propertyName.toLowerCase();
+              if (lowerName.includes('active') || lowerName.includes('enabled') || lowerName.includes('available')) return true;
+              if (lowerName.includes('deleted') || lowerName.includes('disabled') || lowerName.includes('hidden')) return false;
+            }
+            return true;
+            
           default:
-            return schema.example || null;
+            return null;
         }
       };
       
