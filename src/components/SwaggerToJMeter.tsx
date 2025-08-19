@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, Download, FileText, Settings, Zap } from "lucide-react";
-import SwaggerParser from "swagger-parser";
 import * as yaml from "js-yaml";
 
 interface JMeterConfig {
@@ -302,11 +301,25 @@ export const SwaggerToJMeter = () => {
       try {
         spec = JSON.parse(swaggerContent);
       } catch {
-        spec = yaml.load(swaggerContent);
+        try {
+          spec = yaml.load(swaggerContent);
+        } catch (yamlError) {
+          throw new Error("Invalid JSON or YAML format");
+        }
       }
 
-      // Validate with swagger-parser
-      await SwaggerParser.validate(spec);
+      // Basic validation - check if it looks like an OpenAPI/Swagger spec
+      if (!spec || typeof spec !== 'object') {
+        throw new Error("Invalid specification format");
+      }
+      
+      if (!spec.openapi && !spec.swagger) {
+        throw new Error("Not a valid OpenAPI/Swagger specification. Missing 'openapi' or 'swagger' field.");
+      }
+      
+      if (!spec.paths || typeof spec.paths !== 'object') {
+        throw new Error("No paths found in the specification");
+      }
       
       // Generate JMeter XML
       const xml = generateJMeterXml(spec, config);
